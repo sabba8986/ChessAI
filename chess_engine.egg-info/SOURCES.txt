@@ -1,0 +1,10 @@
+Board.cpp
+api.c
+interface.cpp
+move_gen.cpp
+move_gen_t.cpp
+setup.py
+chess_engine.egg-info/PKG-INFO
+chess_engine.egg-info/SOURCES.txt
+chess_engine.egg-info/dependency_links.txt
+chess_engine.egg-info/top_level.txt

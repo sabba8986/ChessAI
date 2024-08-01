@@ -1,0 +1,265 @@
+#include "defines.hpp"
+#include <cwchar>
+#include <iostream>
+
+
+typedef uint64_t(*move)(uint64_t);
+
+
+move move_simple_direction[] = {
+    [](uint64_t board){return (board & BITBOARD_TOP_EDGE) ? UINT64_MAX : board << 8;},
+    [](uint64_t board){return (board & BITBOARD_TOP_EDGE) || (board & BITBOARD_RIGHT_EDGE) ? UINT64_MAX : board << 7;},
+    [](uint64_t board){return (board & BITBOARD_RIGHT_EDGE) ? UINT64_MAX : board >> 1;},
+    [](uint64_t board){return (board & BITBOARD_RIGHT_EDGE) || (board & BITBOARD_BOTTOM_EDGE) ? UINT64_MAX : board >> 9;},
+    [](uint64_t board){return (board & BITBOARD_BOTTOM_EDGE) ? UINT64_MAX : board >> 8;},
+    [](uint64_t board){return (board & BITBOARD_BOTTOM_EDGE) || (board & BITBOARD_LEFT_EDGE) ? UINT64_MAX : board >> 7;},
+    [](uint64_t board){return (board & BITBOARD_LEFT_EDGE) ? UINT64_MAX : board << 1;},
+    [](uint64_t board){return (board & BITBOARD_LEFT_EDGE) || (board & BITBOARD_TOP_EDGE) ? UINT64_MAX : board << 9;}
+};
+
+
+move move_knight_direction[] = {
+    [](uint64_t board){return (board & KNIGHT_1_VALID) ? board >> 10 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_2_VALID) ? board << 6 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_3_VALID) ? board << 15 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_4_VALID) ? board << 17 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_5_VALID) ? board << 10 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_6_VALID) ? board >> 6 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_7_VALID) ? board >> 15 : UINT64_MAX;},
+    [](uint64_t board){return (board & KNIGHT_8_VALID) ? board >> 17 : UINT64_MAX;}
+};
+
+
+move_generator_t::move_generator_t(uint8_t pos): m_tiles{0, 0}, m_trav(BITBOARD_TOP_LEFT >> pos), 
+    m_cur_board_category(0){}
+move_generator_t::move_generator_t(uint64_t pos): m_tiles{0, 0}, m_trav(pos), m_cur_board_category(0){}
+move_generator_t::~move_generator_t(){}
+
+
+
+template<typename T>
+move_generator<T>::move_generator(Board* board, uint8_t pos, bool is_white): move_generator_t(pos){ 
+    set_tiles_no_check(board, BITBOARD_TOP_LEFT >> pos, is_white); 
+}
+template<typename T>
+move_generator<T>::move_generator(Board* board, uint64_t pos, bool is_white): move_generator_t(pos){
+    set_tiles_no_check(board, pos, is_white);
+}
+template<typename T>
+move_generator<T>::~move_generator(){}
+
+
+
+
+
+
+template<typename T>
+template<typename Q> 
+std::enable_if_t<std::is_base_of_v<SLIDING_PIECE, Q>, uint64_t> 
+move_generator<T>::all_moves(Board* board, uint64_t pos, bool is_white){
+    uint64_t result = 0;
+    for(uint8_t dir = Q::start; dir <= Q::end; dir += Q::step){
+        bool cont;
+        uint64_t cur_pos = pos;
+        tile cur_tile;
+        do{
+            cont = false;
+            cur_pos = move_simple_direction[dir](cur_pos);
+            cur_tile = board->tile_info(cur_pos);
+            if(cur_tile.index != INVALID_TILE){
+                if(cur_tile.index == EMPTY_TILE || cur_tile.is_white != is_white){
+                    result |= cur_pos;
+                    if(cur_tile.index == EMPTY_TILE){
+                        cont = true;
+                    }
+                } 
+            } 
+        } while(cont);
+    }
+    return result;
+}
+
+
+
+
+template<typename T>
+template<typename Q> std::enable_if_t<std::is_base_of_v<SINGLE_MOVE_PIECE, Q>, uint64_t> move_generator<T>::all_moves(Board* board, uint64_t pos, bool is_white){
+    uint64_t result = 0;
+    for(uint8_t dir = 0; dir <= 7; dir++){
+        uint64_t new_pos = (Q::move_set)[dir](pos);
+        tile new_tile = board->tile_info(new_pos);
+        if(new_tile.index != INVALID_TILE){
+            if(new_tile.index == EMPTY_TILE || (new_tile.is_white != is_white)){
+                result |= new_pos;
+            }
+        }
+    }
+    return result;
+}
+
+
+
+static uint64_t highlight_pawn_capture(Board* board, uint64_t new_pos, bool is_white){
+    tile new_tile = board->tile_info(new_pos);
+    if(new_tile.index != INVALID_TILE && new_tile.index != EMPTY_TILE && new_tile.is_white != is_white){
+        return new_pos;
+    }
+    return 0;
+}
+
+
+
+inline static uint64_t highlight_pawn_empty(Board* board, uint64_t new_pos, bool is_white){
+    return (board->tile_info(new_pos).index == EMPTY_TILE) ? new_pos : 0;
+}
+
+
+
+template<typename T>
+template<typename Q> std::enable_if_t<std::is_base_of_v<PAWN, Q>, uint64_t> move_generator<T>::all_moves(Board* board, uint64_t pos, bool is_white){
+    int start = is_white ? 7 : 3;
+    uint64_t result = 
+        highlight_pawn_capture(board, move_simple_direction[start](pos), is_white)| 
+        highlight_pawn_capture(board, move_simple_direction[(start + 2) % 8](pos), is_white);
+    
+    uint64_t forward_1 = 
+        highlight_pawn_empty(board, move_simple_direction[(start + 1) % 8](pos), is_white);
+    result |= forward_1;
+    if(forward_1 && (pos & (is_white ? WHITE_PAWN_ROW : BLACK_PAWN_ROW))){
+        result |= 
+            highlight_pawn_empty(board, move_simple_direction[(start + 1) % 8](forward_1), is_white);
+    }
+    return result;
+}
+
+
+
+template<typename T>
+void move_generator<T>::set_tiles_no_check(Board* board, uint64_t pos, bool is_white){
+    uint64_t all_moves = board->generate_all_moves(pos);
+    for(uint64_t trav = BITBOARD_TOP_LEFT; trav; trav >>= 1){
+        if(trav & all_moves){
+            tile tile = board->tile_info(trav);
+            board->make_move(pos, {trav, tile.index});
+            bool move_caused_check = board->is_king_in_check(is_white);
+            board->undo_move(pos, {trav, tile.index});
+            if(!move_caused_check){
+                if(tile.index == EMPTY_TILE){
+                    m_tiles[1] |= trav;
+                } else{
+                    m_tiles[0] |= trav;
+                    m_tile_indices.push(tile.index);
+                }
+            }
+        }
+    }
+}
+
+
+
+uint64_t move_generator_t::all_legal_moves(){
+    return m_tiles[0] | m_tiles[1];
+}
+
+
+
+capture_info move_generator_t::next_move(){
+    if(m_cur_board_category > 1) return {UINT64_MAX, -1};
+    for(;m_cur_board_category < 2; m_cur_board_category++){
+        while(m_trav && !(m_trav & m_tiles[m_cur_board_category])){
+            m_trav >>= 1;
+        }
+        if(m_trav){
+            if(m_cur_board_category == 1){
+                int8_t index = m_tile_indices.front();
+                m_tile_indices.pop();
+                return {m_trav, index}; 
+            } else if(m_cur_board_category == 0){
+                return {m_trav, KING_INDEX};
+            }
+            return {m_trav, -1};
+        } else{
+            m_trav = BITBOARD_TOP_LEFT;
+        }
+    }
+    return {UINT64_MAX, -1};
+}
+
+
+
+template struct move_generator<EMPTY>;
+template struct move_generator<BISHOP>;
+template struct move_generator<ROOK>;
+template struct move_generator<QUEEN>;
+template struct move_generator<KNIGHT>;
+template struct move_generator<KING>;
+template struct move_generator<PAWN>;
+
+
+template uint64_t move_generator<BISHOP>::all_moves(Board* board, uint64_t pos, bool is_white);
+template uint64_t move_generator<ROOK>::all_moves(Board* board, uint64_t pos, bool is_white);
+template uint64_t move_generator<QUEEN>::all_moves(Board* board, uint64_t pos, bool is_white);
+template uint64_t move_generator<KNIGHT>::all_moves(Board* board, uint64_t pos, bool is_white);
+template uint64_t move_generator<KING>::all_moves(Board* board, uint64_t pos, bool is_white);
+template uint64_t move_generator<PAWN>::all_moves(Board* board, uint64_t pos, bool is_white);
+
+#ifndef MOVE_GEN
+#define MOVE_GEN
+
+#include "defines.hpp"
+
+#include "Board.hpp"
+#include "capture.hpp"
+#include <queue>
+#include <type_traits>
+
+
+typedef uint64_t(*move)(uint64_t);
+
+
+struct move_generator_t{
+protected:
+    //captures in index 0, then empty squares in index 1
+    uint64_t m_tiles[2];
+    std::queue<int8_t> m_tile_indices;
+    uint64_t m_trav;
+    uint8_t m_cur_board_category;
+
+
+    move_generator_t(uint8_t pos);
+    move_generator_t(uint64_t pos);
+public:
+    virtual ~move_generator_t();
+    capture_info next_move();
+    uint64_t all_legal_moves();
+};
+
+
+
+template<typename T>
+struct move_generator: public move_generator_t{
+private:
+    void set_tiles_no_check(Board* board, uint64_t pos, bool is_white);
+public:
+    template<typename Z = T>
+    static std::enable_if_t<std::is_base_of_v<SLIDING_PIECE, Z>, uint64_t> 
+    all_moves(Board* board, uint64_t pos, bool is_white);
+
+
+    template<typename Z = T>
+    static std::enable_if_t<std::is_base_of_v<SINGLE_MOVE_PIECE, Z>, uint64_t> 
+    all_moves(Board* board, uint64_t pos, bool is_white);
+
+
+    template<typename Z = T>
+    static std::enable_if_t<std::is_base_of_v<PAWN, Z>, uint64_t> 
+    all_moves(Board* board, uint64_t pos, bool is_white);
+
+    ~move_generator();
+    move_generator(Board* board, uint8_t pos, bool is_white);
+    move_generator(Board* board, uint64_t pos, bool is_white); 
+};
+
+
+#include "move_gen.cpp"
+#endif
