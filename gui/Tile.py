@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget,  QPushButton
-from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import QSize
+from PyQt5.QtWidgets import QApplication, QVBoxLayout, QWidget,  QPushButton
+from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import QSize
 import sys
 
 

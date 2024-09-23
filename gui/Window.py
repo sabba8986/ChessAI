@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget, QMessageBox
-from PyQt6.QtGui import QFont
+from PyQt5.QtWidgets import QApplication, QVBoxLayout, QWidget, QMessageBox
+from PyQt5.QtGui import QFont
 from . import Tile
 import chess_engine
 import sys
@@ -24,7 +24,7 @@ class Window(QWidget):
             self.highlighted_tiles = 0
             self.cur_selected_square = -1
             self.is_selected = False
-            self.pieces_mask = 18446462598732906495
+            self.white_turn = True;
             for tile in self.tiles:
                 tile.reset_icon()
                 tile.reset_color()
@@ -41,7 +41,7 @@ class Window(QWidget):
                 self.tiles.append(Tile.Tile(self, i, j))
     
     def get_piece_locations(self):
-            return self.pieces_mask 
+            return chess_engine.all_pieces(); 
 
     def clear_highlighted_squares(self):
         for tile in self.tiles:
@@ -50,30 +50,36 @@ class Window(QWidget):
 
     def highlight_moves(self, pos):   
         if(self.is_selected and ((BITBOARD_TOP_LEFT >> pos) & self.highlighted_tiles) != 0): 
-            chess_engine.make_move(self.cur_selected_square, pos) 
+            chess_engine.make_move(self.cur_selected_square, pos)
+            self.white_turn = not self.white_turn
             start_tile = self.tiles[self.cur_selected_square]
             end_tile = self.tiles[pos]
             end_tile.setIcon(start_tile.icon())
             start_tile.set_empty_icon()
             self.clear_highlighted_squares()
             self.is_selected = False
-            self.pieces_mask &= ~(BITBOARD_TOP_LEFT >> self.cur_selected_square)
-            self.pieces_mask |= (BITBOARD_TOP_LEFT >> pos) 
-            check = chess_engine.check()
-            checkmate = chess_engine.checkmate()
-            if(checkmate != -1):
+            check = chess_engine.check(self.white_turn)
+            checkmate = chess_engine.checkmate(self.white_turn)
+            if(checkmate == 1):
                 self.show_end_message(True if checkmate == 1 else False)
-            elif(check != -1):
-                king_button = self.tiles[bitboard_to_index(chess_engine.get_king_pos(True if check == 1 else 0))]
+            elif(check == 1):
+                king_button = self.tiles[bitboard_to_index(chess_engine.get_king_pos(check == 1))]
                 king_button.highlight_check()
         else:
             self.clear_highlighted_squares()
             self.is_selected = True
             self.cur_selected_square = pos
-            self.highlighted_tiles = chess_engine.generate_all_moves(pos)
-            for tile in self.tiles:
-                if(((BITBOARD_TOP_LEFT >> tile.get_position()) & self.highlighted_tiles) != 0):
-                    tile.highlight()
+            if((BITBOARD_TOP_LEFT >> pos) & chess_engine.get_pieces(not self.white_turn)):
+                self.highlighted_tiles = 0
+            else:
+                self.highlighted_tiles = chess_engine.generate_all_moves(pos)
+            tile = BITBOARD_TOP_LEFT
+            ind = 0
+            while(tile):
+                if((tile & self.highlighted_tiles) != 0):
+                    self.tiles[ind].highlight()
+                tile >>= 1
+                ind += 1
 
 
 

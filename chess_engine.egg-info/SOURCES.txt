@@ -1,5 +1,8 @@
 Board.cpp
+Indices.cpp
+Moves.cpp
 api.c
+attack_tables.cpp
 interface.cpp
 move_gen.cpp
 move_gen_t.cpp

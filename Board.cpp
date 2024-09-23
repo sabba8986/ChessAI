@@ -1,31 +1,159 @@
 #include "move_gen.hpp"
 #include "Board.hpp"
+#include "Moves.hpp"
+#include "PieceType.hpp"
+#include "Indices.hpp"
 #include <iostream>
 #include <bitset>
 
 
+
+static constexpr std::array<uint8_t, 4> upper_dirs = {6, 7, 0, 1};
+static constexpr std::array<uint8_t, 4> lower_dirs = {2, 3, 4, 5};
+static constexpr PieceType types[] = {PAWN, ROOK, KNIGHT, BISHOP, QUEEN, KING};
+
+static uint8_t opp_dir(uint8_t dir){
+    return (dir + 4) % 8;
+}
+
+std::unique_ptr<move_generator_t> Board::create_generator(const Piece& piece_){
+    BasicPiece piece = {piece_.pos, piece_.info.color};
+    switch(piece_.info.type){
+        case EMPTY:
+            return std::make_unique<move_generator<EMPTY_T>>(piece, *this);
+        case PAWN:
+            return std::make_unique<move_generator<PAWN_T>>(piece, *this);
+        case ROOK:
+            return std::make_unique<move_generator<ROOK_T>>(piece, *this);
+        case BISHOP:
+            return std::make_unique<move_generator<BISHOP_T>>(piece, *this);
+        case KNIGHT:
+            return std::make_unique<move_generator<KNIGHT_T>>(piece, *this);
+        case QUEEN:
+            return std::make_unique<move_generator<QUEEN_T>>(piece, *this);
+        case KING:
+            return std::make_unique<move_generator<KING_T>>(piece, *this);
+    }
+}
+
+
+std::unique_ptr<move_generator_t> Board::create_generator(uint8_t pos){
+    return create_generator({tile_info(BITBOARD_TOP_LEFT >> pos), BITBOARD_TOP_LEFT >> pos});
+}
+
+uint64_t Board::all_legal_moves(uint8_t pos){
+    return create_generator(pos)->all_legal_moves();
+}
+
+uint64_t Board::generate_all_threat_moves(const Piece& piece_){
+    BasicPiece piece = {piece_.pos, piece_.info.color}; 
+    switch(piece_.info.type){
+        case EMPTY:
+            return 0;
+        case PAWN:
+            return move_generator<PAWN_T>::all_threat_moves(piece, *this);
+        case ROOK:
+            return move_generator<ROOK_T>::all_threat_moves(piece, *this);
+        case BISHOP:
+            return move_generator<BISHOP_T>::all_threat_moves(piece, *this); 
+        case KNIGHT:
+            return move_generator<KNIGHT_T>::all_threat_moves(piece, *this);
+        case QUEEN:
+            return move_generator<QUEEN_T>::all_threat_moves(piece, *this);
+        case KING:
+            return move_generator<KING_T>::all_threat_moves(piece, *this); 
+    }
+
+}
+
+
+uint64_t Board::generate_all_check_moves(const Piece& piece_){
+    BasicPiece piece = {piece_.pos, piece_.info.color}; 
+    switch(piece_.info.type){
+        case EMPTY:
+            return 0;
+        case PAWN:
+            return move_generator<PAWN_T>::all_check_moves(piece, *this);
+        case ROOK:
+            return move_generator<ROOK_T>::all_check_moves(piece, *this);
+        case BISHOP:
+            return move_generator<BISHOP_T>::all_check_moves(piece, *this); 
+        case KNIGHT:
+            return move_generator<KNIGHT_T>::all_check_moves(piece, *this);
+        case QUEEN:
+            return move_generator<QUEEN_T>::all_check_moves(piece, *this);
+        case KING:
+            return move_generator<KING_T>::all_check_moves(piece, *this); 
+    }
+
+}
+
+
+void Board::regenerate_threats_color(Color color){
+    uint64_t& ally_threats = (color == WHITE ? white_threats : black_threats);
+    ally_threats = 0;
+    const uint64_t* allies = get_allies(color);
+    for(PieceType type: types){
+        uint64_t board = allies[type];
+        for(uint64_t trav = BITBOARD_TOP_LEFT; trav; trav >>= 1){
+            if(trav & board){
+                ally_threats |= generate_all_threat_moves({{type, color}, trav});
+            }
+        }
+    }
+}
+
+
+uint8_t Board::get_dir_between_spaces(uint64_t space_1, uint64_t space_2) const{
+    using namespace Moves::SlidingPiece;
+    const std::array<uint8_t, 4>& dirs = (space_2 > space_1) ? upper_dirs : lower_dirs;
+    uint64_t all_pieces = this->all_pieces();
+    for(const uint8_t dir: dirs){
+        uint64_t overlap = (get_full_dir(dir, space_1) & get_full_dir(opp_dir(dir), space_2));
+        if(overlap){
+            return overlap & all_pieces ? NO_THREAT_DIR : dir;
+        }
+    }
+    return NO_THREAT_DIR;
+}
+
+
+bool Board::is_pinned_piece(uint8_t threat_dir, const Piece& piece){
+    Color color = piece.info.color;
+    PieceType type = piece.info.type;
+    const uint64_t* opposing_color = get_opps(color);
+    uint64_t possible_threats = 
+        get_board(~color, PieceType::QUEEN) | 
+        get_board(~color, (threat_dir % 2) ? PieceType::BISHOP : PieceType::ROOK);
+    toggle_piece(piece);
+    uint64_t threat_dir_moves = Moves::SlidingPiece::get_moves(
+        threat_dir, {get_king(color), color}, *this
+    );
+    toggle_piece(piece);
+    return (threat_dir_moves & possible_threats) != 0;
+}
+
 //returns:
 //for tile_val: 0 if can't move into that space, 1 if the space is empty, or -1 if the space contains a piece of the opposing color
 //for capture_index, -1 if tile_val is not -1, or the index of the opposing piece if tile_val if the
-tile Board::tile_info(uint64_t bitboard) const{
-    if(bitboard == UINT64_MAX) return {INVALID_TILE, false};
-    for(int8_t i = 0; i < 6; i++){
-        if(bitboard & white[i]){
-            return {i, true};
-        } else if(bitboard & black[i]){
-            return {i, false};
+PieceInfo Board::tile_info(uint64_t bitboard){
+    for(PieceType type: types){
+        if(get_board(WHITE, type) & bitboard){
+            return {type, WHITE};
+        } else if(get_board(BLACK, type) & bitboard){
+            return {type, BLACK};
         }
     }
-    return {-1, false};
+    return {EMPTY, BLACK};
 } 
 
 
-Board::Board(): status(8){
+Board::Board(){
     reset();
 }
 
 
-
+//need to replace macros with enum valear
 void Board::print_board(){
     uint64_t trav = BITBOARD_TOP_LEFT;
     for(int i = 0; i < 8; i++){
@@ -64,193 +192,59 @@ void Board::print_bitboard(uint64_t bitboard){
 }
 
 
-std::unique_ptr<move_generator_t> Board::create_generator(uint8_t pos){
-   tile tile = tile_info(BITBOARD_TOP_LEFT >> pos); 
-   if(tile.is_white == (bool)(status & TURN_MASK)){
-       return std::make_unique<move_generator<EMPTY>>(this, pos, tile.is_white);
-   } 
-   switch(tile.index){
-       case PAWN_INDEX:
-           return std::make_unique<move_generator<PAWN>>(this, pos, tile.is_white);
-       case ROOK_INDEX:
-           return std::make_unique<move_generator<ROOK>>(this, pos, tile.is_white); 
-       case KNIGHT_INDEX:
-           return std::make_unique<move_generator<KNIGHT>>(this, pos, tile.is_white); 
-       case BISHOP_INDEX:
-           return std::make_unique<move_generator<BISHOP>>(this, pos, tile.is_white);
-       case QUEEN_INDEX:
-           return std::make_unique<move_generator<QUEEN>>(this, pos, tile.is_white);
-       case KING_INDEX:
-           return std::make_unique<move_generator<KING>>(this, pos, tile.is_white);
-       default:
-           return std::make_unique<move_generator<EMPTY>>(this, pos, true);
-   }
-}
-
-std::unique_ptr<move_generator_t> Board::create_generator(uint8_t index, bool is_white, uint64_t pos){ 
-   if(is_white == (bool)(status & TURN_MASK)){
-       return std::make_unique<move_generator<EMPTY>>(this, pos, is_white);
-   } 
-   switch(index){
-       case PAWN_INDEX:
-           return std::make_unique<move_generator<PAWN>>(this, pos, is_white);
-       case ROOK_INDEX:
-           return std::make_unique<move_generator<ROOK>>(this, pos, is_white); 
-       case KNIGHT_INDEX:
-           return std::make_unique<move_generator<KNIGHT>>(this, pos, is_white); 
-       case BISHOP_INDEX:
-           return std::make_unique<move_generator<BISHOP>>(this, pos, is_white);
-       case QUEEN_INDEX:
-           return std::make_unique<move_generator<QUEEN>>(this, pos, is_white);
-       case KING_INDEX:
-           return std::make_unique<move_generator<KING>>(this, pos, is_white);
-       default:
-           return std::make_unique<move_generator<EMPTY>>(this, pos, true);
-   }
-}
-
-void Board::simulate_move(uint64_t old_pos, tile old_tile, capture_info new_tile_info){
-    (old_tile.is_white ? white : black)[old_tile.index] &= ~old_pos;
-    (old_tile.is_white ? white : black)[old_tile.index] |= new_tile_info.bitboard;
-    if(new_tile_info.index != -1){
-        (old_tile.is_white ? black : white)[new_tile_info.index] &= ~(new_tile_info.bitboard);
-    }
-}
-
-
-uint8_t Board::make_move(uint64_t old_pos, capture_info new_tile_info){
-    tile old_tile = this->tile_info(old_pos);
-    uint8_t prev_status = status;
-    simulate_move(old_pos, old_tile, new_tile_info);
-        if(is_king_in_check(old_tile.is_white ? false : true)){
-        status |= CHECK_MASK;
-        if(is_king_in_checkmate(old_tile.is_white ? false : true)){
-            std::cout << "Not supposed to be here" << std::endl;
-            status |= CHECKMATE_MASK;
-        }
-    }
-    status ^= TURN_MASK; 
-    return prev_status;
-}
-
 
 uint8_t Board::make_move(uint8_t start_pos, uint8_t end_pos){
-    uint64_t new_board = BITBOARD_TOP_LEFT >> end_pos;
-    return this->make_move(BITBOARD_TOP_LEFT >> start_pos, {new_board, this->tile_info(new_board).index});
+    uint64_t old_bitboard = BITBOARD_TOP_LEFT >> start_pos;
+    uint64_t new_bitboard = BITBOARD_TOP_LEFT >> end_pos;
+    return make_move({tile_info(old_bitboard), old_bitboard}, 
+                            {tile_info(new_bitboard), new_bitboard});
 }
 
 
-void Board::undo_move(uint64_t old_pos, capture_info new_tile_info, uint8_t old_status){
-    tile after_capture = this->tile_info(new_tile_info.bitboard);
-    (after_capture.is_white ? white : black)[after_capture.index] &= ~new_tile_info.bitboard;
-    (after_capture.is_white ? white : black)[after_capture.index] |= old_pos;
-    if(new_tile_info.index != -1){
-        (after_capture.is_white ? black : white)[new_tile_info.index] |= new_tile_info.bitboard;
+
+
+uint8_t Board::make_move(const Piece& a_piece, const Piece& d_piece){
+    //changing bitboards
+    Color a_color = a_piece.info.color;
+    Color d_color = d_piece.info.color;
+    PieceType a_type = a_piece.info.type;
+    PieceType d_type = d_piece.info.type; 
+    get_allies(a_color)[a_type] ^= (a_piece.pos | d_piece.pos);
+    if(d_type != EMPTY){
+        get_allies(d_color)[d_type] &= ~d_piece.pos;
+    } 
+    //updating threat list
+    /*std::cout << "White threats:\n";
+    print_bitboard(white_threats);
+    std::cout << "\n\nBlack threats:\n";
+    print_bitboard(black_threats);
+    */
+    const Piece& new_a_piece = {a_piece.info, d_piece.pos};
+    checking_piece_threat_moves = generate_all_check_moves(new_a_piece);
+    std::cout << "The checking piece (if there is a check) is making moves: " << std::endl;
+    print_bitboard(checking_piece_threat_moves);
+    std::cout << std::endl;
+    if(generate_all_threat_moves(new_a_piece) & get_king(~new_a_piece.info.color)){  
+        change_piece_color(new_a_piece);
+        regenerate_threats();
+        change_piece_color(new_a_piece);
+        set_check();
+        std::cout << "Check!" << std::endl;
+    } else{
+        regenerate_threats();
     }
-    status = old_status; 
+    change_turn();
+    return 0;
 }
 
 
-
-
-
-uint64_t Board::generate_all_moves(uint8_t index, bool is_white, uint64_t pos){
-    switch(index){
-        case PAWN_INDEX:
-            return move_generator<PAWN>::all_moves<>(this, pos, is_white);
-        case BISHOP_INDEX:
-            return move_generator<BISHOP>::all_moves<>(this, pos, is_white);
-        case ROOK_INDEX:
-            return move_generator<ROOK>::all_moves<>(this, pos, is_white);
-        case QUEEN_INDEX:
-            return move_generator<QUEEN>::all_moves<>(this, pos, is_white);
-        case KNIGHT_INDEX:
-            return move_generator<KNIGHT>::all_moves<>(this, pos, is_white);
-        case KING_INDEX:
-            return move_generator<KING>::all_moves<>(this, pos, is_white);
-        default:
-            return 0;
-    }
+void Board::change_piece_color(const Piece& piece){
+    get_allies(piece.info.color)[piece.info.type] ^= piece.pos;
+    get_opps(piece.info.color)[piece.info.type] ^= piece.pos;
 }
-
-uint64_t Board::generate_all_moves(uint64_t pos){
-    tile tile = tile_info(pos);
-    switch(tile.index){
-        case PAWN_INDEX:
-            return move_generator<PAWN>::all_moves<>(this, pos, tile.is_white);
-        case BISHOP_INDEX:
-            return move_generator<BISHOP>::all_moves<>(this, pos, tile.is_white);
-        case ROOK_INDEX:
-            return move_generator<ROOK>::all_moves<>(this, pos, tile.is_white);
-        case QUEEN_INDEX:
-            return move_generator<QUEEN>::all_moves<>(this, pos, tile.is_white);
-        case KNIGHT_INDEX:
-            return move_generator<KNIGHT>::all_moves<>(this, pos, tile.is_white);
-        case KING_INDEX:
-            return move_generator<KING>::all_moves<>(this, pos, tile.is_white);
-        default:
-            return 0;
-    }
-}
-
-
-
-bool Board::non_knight_piece_checking_king(bool is_white){
-    uint64_t king_pos = is_white ? white[KING_INDEX] : black[KING_INDEX];
-    uint64_t all_possible_attack_tiles = move_generator<QUEEN>::all_moves(this, king_pos, is_white); 
-    for(uint64_t trav = BITBOARD_TOP_LEFT; trav; trav >>= 1){
-        if(trav & all_possible_attack_tiles){
-            tile attack_tile = tile_info(trav);
-            if(attack_tile.index != EMPTY_TILE && attack_tile.is_white != is_white){
-                if(king_pos & generate_all_moves(attack_tile.index, attack_tile.is_white, trav)){
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
-
-bool Board::is_king_in_check(bool is_white){
-    uint64_t all_possible_knight_pos = 
-        move_generator<KNIGHT>::all_moves(this, is_white ? white[KING_INDEX] : black[KING_INDEX], is_white);
-    for(uint64_t trav = BITBOARD_TOP_LEFT; trav; trav >>= 1){
-        if(trav & all_possible_knight_pos){
-            tile attack_tile = tile_info(trav);
-            if(attack_tile.index == KNIGHT_INDEX && attack_tile.is_white != is_white){
-                return true;
-            }
-        }
-    }
-    return non_knight_piece_checking_king(is_white);
-}
-
-
-bool Board::is_king_in_checkmate(bool is_white){
-    uint64_t all_pieces = is_white ? black[0] | black[1] | black[2] | black[3] | black[4] | black[5] : 
-        white[0] | white[1] | white[2] | white[3] | white[4] | white[5];
-    uint8_t counter = 0;
-    for(uint64_t trav = BITBOARD_TOP_LEFT; trav; trav >>= 1, counter++){
-        if(trav & all_pieces){
-            capture_info info;
-            std::unique_ptr<move_generator_t> gen = create_generator(counter);
-            while((info = gen->next_move()).bitboard != UINT64_MAX){
-                simulate_move(trav, tile_info(trav), info);
-                bool is_still_in_check = is_king_in_check(is_white);
-                undo_move(trav, info, status);
-                if(!is_still_in_check){
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
 
 void Board::reset(){
-    status = 8;
+    status = 1;
     white[PAWN_INDEX] = INIT_WHITE_PAWNS;
     white[ROOK_INDEX] = INIT_WHITE_ROOKS;
     white[KNIGHT_INDEX] = INIT_WHITE_KNIGHTS;
@@ -264,5 +258,5 @@ void Board::reset(){
     black[BISHOP_INDEX] = INIT_BLACK_BISHOPS;
     black[QUEEN_INDEX] = INIT_BLACK_QUEEN;
     black[KING_INDEX] = INIT_BLACK_KING;
-
+    regenerate_threats();
 }

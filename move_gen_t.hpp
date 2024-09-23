@@ -5,9 +5,9 @@
 #include "capture.hpp"
 #include <queue>
 #include <type_traits>
+#include "BasicPiece.hpp"
 
-
-
+class Board;
 
 
 struct move_generator_t{
@@ -15,10 +15,10 @@ protected:
     uint64_t moves;
 
     move_generator_t();
-    virtual void load_tiles() = 0;
 public:
-    virtual ~move_generator_t();
-    uint64_t all_moves();
+    uint64_t all_legal_moves();
+
+    virtual ~move_generator_t(); 
 };
 
 
